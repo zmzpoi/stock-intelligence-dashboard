@@ -1,0 +1,24 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.idea/
+.DS_Store
+.env
+.env.*
+.streamlit/secrets.toml
+*.pem
+
+# Python environments
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Local configuration
+.idea/
+.DS_Store
+.env
+.env.*
+.streamlit/secrets.toml
