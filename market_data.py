@@ -73,6 +73,52 @@ _NAME_ALIASES = {
     '小米': ('1810.HK', 'Xiaomi'),
 }
 
+# Verified common Chinese-language names. Used only for these exact tickers;
+# unknown companies fall back to provider metadata rather than guessed labels.
+LOCAL_COMPANY_NAMES = {
+    '600519.SS': '贵州茅台', '000858.SZ': '五粮液',
+    '300750.SZ': '宁德时代', '002594.SZ': '比亚迪',
+    '600036.SS': '招商银行', '601318.SS': '中国平安',
+    '000001.SZ': '平安银行',
+    '0700.HK': '腾讯控股', '9988.HK': '阿里巴巴',
+    '3690.HK': '美团', '1810.HK': '小米集团',
+}
+
+
+def _company_display_name(symbol: str, ticker, metadata: dict) -> str:
+    """Best-effort company name without making the quote dependent on metadata.
+
+    History metadata often lacks company names. A curated Chinese label wins
+    for known securities; otherwise try provider history metadata then quote
+    profile. Do not fetch a quote profile for indexes or invent missing names.
+    """
+    if symbol in LOCAL_COMPANY_NAMES:
+        return LOCAL_COMPANY_NAMES[symbol]
+
+    for key in ('longName', 'shortName', 'displayName'):
+        name = metadata.get(key)
+        if isinstance(name, str) and name.strip() and name.strip().upper() != symbol:
+            return name.strip()[:160]
+
+    if symbol.startswith('^') or any(
+        symbol == item['symbol']
+        for group in MARKET_INDICES.values() for item in group
+    ):
+        return ''
+
+    try:
+        profile = ticker.get_info() or {}
+    except Exception:
+        return ''
+    if not isinstance(profile, dict):
+        return ''
+    for key in ('longName', 'shortName', 'displayName'):
+        name = profile.get(key)
+        if isinstance(name, str) and name.strip() and name.strip().upper() != symbol:
+            return name.strip()[:160]
+    return ''
+
+
 _ALLOWED_TICKER = re.compile(r'\^?[A-Z0-9][A-Z0-9.\-]{0,19}\Z')
 _ALLOWED_QUERY = re.compile(r'^[\w\s.\-&\u00c0-\u024f\u4e00-\u9fff]{1,80}$', re.UNICODE)
 _ALLOWED_PERIODS = frozenset(('1mo', '3mo', '6mo', '1y', '2y', '5y'))
@@ -279,7 +325,7 @@ def fetch_prices(symbol: str, period: str = '6mo', interval: str = '1d') -> tupl
     if not isinstance(meta, dict):
         meta = {}
     prices.attrs.update({
-        'company': meta.get('longName') or meta.get('shortName') or '',
+        'company': _company_display_name(code, ticker, meta),
         'currency': meta.get('currency') or '',
         'exchange': meta.get('fullExchangeName') or meta.get('exchangeName') or '',
         'market': identify_market(code),
