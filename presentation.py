@@ -1,61 +1,81 @@
-"""Escaped, data-driven UI fragments; no network calls or sample market data."""
+"""Safe reusable Streamlit presentation helpers and neutral market colors."""
 from html import escape
+from i18n import t
 from pathlib import Path
+from datetime import datetime
+import math
 import numpy as np
 import pandas as pd
 import streamlit as st
 
 ROOT = Path(__file__).resolve().parent
-LOGO = (ROOT / 'assets/taurus-mark.svg').read_text()
+LOGO = (ROOT / 'assets/taurus-mark.svg').read_text(encoding='utf-8')  # user-owned unchanged mark
+
+PALETTES = {
+    'neutral': ('#285EC5', '#C87934'),
+    'us': ('#18794E', '#C3464C'),
+    'cn': ('#C3464C', '#18794E'),
+}
 
 
-def section(title, note=''):
-    st.markdown(f'<div class="section-line"><h2>{escape(title)}</h2><span>{escape(note)}</span></div>', unsafe_allow_html=True)
+def movement_color(change, mode='neutral'):
+    up, down = PALETTES.get(mode, PALETTES['neutral'])
+    if change is None or not math.isfinite(float(change)) or change == 0:
+        return '#64748B'
+    return up if change > 0 else down
 
 
-def sparkline(values, color):
-    values = np.asarray(values, dtype=float)
-    lo, hi = float(values.min()), float(values.max())
-    ys = 23 - ((values-lo) / (hi-lo) - .5) * 34 if hi > lo else np.full(len(values),23.)
-    xs = np.linspace(2,298,len(values))
-    points = ' '.join(f'{x:.1f},{y:.1f}' for x,y in zip(xs,ys))
-    return f'<svg class="spark" viewBox="0 0 300 46" preserveAspectRatio="none" aria-label="Recent price trend"><polyline points="{points}" fill="none" stroke="{color}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>'
+def sparkline(values, color='#5266C6'):
+    points = np.asarray(values, dtype=float)
+    points = points[np.isfinite(points)]
+    if len(points) < 2:
+        return ''
+    low, high = float(points.min()), float(points.max())
+    x = np.linspace(2, 298, len(points))
+    y = 22 - ((points-low)/(high-low)-.5)*33 if high > low else np.full(len(points), 22.)
+    path = ' '.join(f'{a:.1f},{b:.1f}' for a, b in zip(x, y))
+    return f'<svg viewBox="0 0 300 46" class="spark" role="img" aria-label="Historical observations"><polyline points="{path}" fill="none" stroke="{color}" stroke-width="2.2" vector-effect="non-scaling-stroke"/></svg>'
 
 
-def market_tile(symbol, name, result):
-    if isinstance(result, str) or result is None:
-        value, delta, stamp = 'Unavailable', 'Request failed', ''
-        cls = 'neutral'
-    else:
-        frame, fetched = result
-        close = frame['Close']
-        change = (float(close.iloc[-1])/float(close.iloc[-2])-1)*100
-        value = f'{float(close.iloc[-1]):,.2f}'
-        delta = f'{"+" if change >= 0 else ""}{change:.2f}%'
-        cls = 'positive' if change >= 0 else 'negative'
-        stamp = f'{frame.index[-1]:%d %b %Y} · retrieved {fetched:%H:%M} UTC'
-    st.markdown(f'<div class="market-tile"><div class="market-head">{escape(name)}<span class="market-code">{escape(symbol)}</span></div><div class="market-number">{value}</div><div class="{cls}">{delta} <span class="market-code">vs previous daily record</span></div><div class="market-date">{stamp}</div></div>', unsafe_allow_html=True)
+def section(title: str, note: str = ''):
+    st.markdown(f'<div class="section-head"><h2>{escape(title)}</h2><span>{escape(note)}</span></div>', unsafe_allow_html=True)
 
 
-def stock_card(symbol, name, result):
-    st.markdown(f'<div class="ticker-top"><div class="ticker-icon">{escape(name[:1])}</div><div><div class="ticker-symbol">{escape(symbol)}</div><div class="ticker-name">{escape(name)}</div></div></div>',unsafe_allow_html=True)
-    if result is None or isinstance(result,str):
-        st.caption('Price unavailable — open research to retry.')
+def market_tile(symbol, name, result, mode='neutral', language='en'):
+    if result is None or isinstance(result, str):
+        st.markdown(f'<div class="market-tile"><div class="market-head">{escape(name)}</div><div class="market-code">{escape(symbol)}</div><div class="muted">— · {escape(t("v2.data_unavailable", language))}</div></div>', unsafe_allow_html=True)
         return
-    frame, fetched = result
-    close = frame['Close']
-    change = (float(close.iloc[-1])/float(close.iloc[-2])-1)*100
-    color, cls = ('#19714f','positive') if change >= 0 else ('#bd494b','negative')
-    unit = escape(str(frame.attrs.get('currency') or 'unit unavailable'))
-    st.markdown(f'<div class="ticker-values"><div class="ticker-price">{float(close.iloc[-1]):,.2f} <span class="unit">{unit}</span></div><div class="{cls}">{change:+.2f}%</div></div>'+sparkline(close.tail(22),color)+f'<div class="small-note">{frame.index[-1]:%d %b %Y} · retrieved {fetched:%H:%M} UTC · 22-observation trend</div>',unsafe_allow_html=True)
+    frame, retrieved = result
+    if len(frame) < 2:
+        return
+    close = frame['Close'].astype(float)
+    change = (close.iloc[-1]/close.iloc[-2]-1)*100
+    hue = movement_color(change, mode)
+    source_date = str(frame.index[-1].date())
+    st.markdown(f'<div class="market-tile"><div class="market-head">{escape(name)}</div><div class="market-code">{escape(symbol)}</div><div class="market-number">{float(close.iloc[-1]):,.2f}</div><div style="color:{hue}" class="market-change">{change:+.2f}% <span>{escape(t("v2.previous_close", language))}</span></div>{sparkline(close.tail(30),hue)}<div class="tiny">{escape(source_date)} · {escape(t("v2.daily_observation", language))}</div></div>',unsafe_allow_html=True)
 
 
-def news_cards(items):
+def stock_card(symbol, name, result, mode='neutral', language='en'):
+    st.markdown(f'<div class="ticker-top"><div class="ticker-icon">{escape(name[:1] or "?")}</div><div><b>{escape(symbol)}</b><div class="tiny">{escape(name)}</div></div></div>', unsafe_allow_html=True)
+    if result is None or isinstance(result, str):
+        st.caption(t("v2.data_unavailable", language))
+        return
+    frame, retrieved = result
+    close = frame['Close'].astype(float)
+    change = (close.iloc[-1]/close.iloc[-2]-1)*100
+    hue = movement_color(change, mode)
+    unit = escape(str(frame.attrs.get('currency') or ''))
+    st.markdown(f'<div class="ticker-values"><b>{close.iloc[-1]:,.2f}</b> <span>{unit}</span><span style="color:{hue}">{change:+.2f}%</span></div>'+sparkline(close.tail(25),hue)+f'<div class="tiny">{escape(str(frame.index[-1].date()))} · {escape(t("v2.daily_observation", language))}</div>',unsafe_allow_html=True)
+
+
+def news_cards(items, language='en'):
     for item in items:
-        # URLs have already been checked for an HTTP(S) scheme in the data adapter.
-        date = item['date']
         try:
-            stamp = pd.to_datetime(date, utc=True).strftime('%d %b %Y · %H:%M UTC')
-        except (ValueError, TypeError):
-            stamp = date
-        st.markdown(f'<div class="news-card"><div class="news-meta">{escape(item["source"])}</div><div class="news-title"><a href="{escape(item["url"],quote=True)}" target="_blank" rel="noopener noreferrer">{escape(item["title"])} ↗</a></div><div class="news-time">{escape(stamp)}</div></div>',unsafe_allow_html=True)
+            dt = pd.to_datetime(item.get('date'), utc=True, errors='coerce')
+            stamp = dt.strftime('%d %b %Y · %H:%M UTC') if not pd.isna(dt) else t('news.no_date', language)
+        except (TypeError, ValueError):
+            stamp = t('news.no_date', language)
+        title = escape(item.get('title',''))
+        url = escape(item.get('url',''), quote=True)
+        provider = escape(item.get('source','Unspecified publisher'))
+        st.markdown(f'<div class="news-card"><div class="news-meta">{provider} · {escape(stamp)}</div><div class="news-title"><a href="{url}" target="_blank" rel="noopener noreferrer">{title} ↗</a></div></div>',unsafe_allow_html=True)
