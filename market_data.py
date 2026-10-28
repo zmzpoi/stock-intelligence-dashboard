@@ -76,12 +76,17 @@ _NAME_ALIASES = {
 # Verified common Chinese-language names. Used only for these exact tickers;
 # unknown companies fall back to provider metadata rather than guessed labels.
 LOCAL_COMPANY_NAMES = {
+    'AAPL': 'Apple Inc.', 'MSFT': 'Microsoft', 'NVDA': 'NVIDIA',
+    'GOOGL': 'Alphabet', 'AMZN': 'Amazon', 'TSLA': 'Tesla',
+    'META': 'Meta Platforms', 'AMD': 'Advanced Micro Devices',
+    'SAP.DE': 'SAP SE', 'SIE.DE': 'Siemens AG',
+    'ASML.AS': 'ASML Holding', 'MC.PA': 'LVMH',
     '600519.SS': '贵州茅台', '000858.SZ': '五粮液',
     '300750.SZ': '宁德时代', '002594.SZ': '比亚迪',
     '600036.SS': '招商银行', '601318.SS': '中国平安',
-    '000001.SZ': '平安银行',
+    '000001.SZ': '平安银行', '600000.SS': '浦发银行', '601398.SS': '工商银行',
     '0700.HK': '腾讯控股', '9988.HK': '阿里巴巴',
-    '3690.HK': '美团', '1810.HK': '小米集团',
+    '3690.HK': '美团', '1810.HK': '小米集团', '1299.HK': '友邦保险',
 }
 
 
@@ -227,7 +232,7 @@ def search_stocks(query: str, max_results: int = 8) -> list[dict]:
         normalized = None
     ticker_like = bool(normalized and (len(q) <= 5 or '.' in q or '-' in q or q.startswith('^') or any(c.isdigit() for c in q)))
     if ticker_like:
-        add(_search_item(normalized, normalized, source='Ticker format; not yet verified'))
+        add(_search_item(normalized, LOCAL_COMPANY_NAMES.get(normalized, normalized), source='Local verified-name mapping' if normalized in LOCAL_COMPANY_NAMES else 'Ticker format; not yet verified'))
         return found
 
     try:
@@ -378,7 +383,7 @@ def fetch_fundamentals(symbol: str) -> tuple[dict, datetime]:
     }
     result = {
         'symbol': code,
-        'company': str(info.get('longName') or info.get('shortName') or code)[:180],
+        'company': str(LOCAL_COMPANY_NAMES.get(code) or info.get('longName') or info.get('shortName') or code)[:180],
         'sector': str(info.get('sector') or '')[:120],
         'industry': str(info.get('industry') or '')[:120],
         'description': str(info.get('longBusinessSummary') or '')[:3500],

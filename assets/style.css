@@ -44,3 +44,6 @@ header[data-testid="stHeader"] {background:var(--paper);}
 [data-testid="stMetricValue"]{font-size:25px;color:var(--ink)}
 [data-testid="stVerticalBlockBorderWrapper"]{border-radius:15px!important}
 @media(max-width:800px){.block-container{padding:4.75rem .8rem 2rem}.brand b{font-size:16px}.search-hero{margin:25px auto 8px}.hero-title{letter-spacing:-1.5px}.section-head{display:block}.section-head span{display:block;text-align:left;margin-top:4px}.market-number{font-size:19px}.site-footer{display:block}}
+/* V3: allow translated nav labels to wrap instead of disappearing on narrow screens. */
+[data-testid="stRadio"] [role="radiogroup"] { flex-wrap:wrap; gap:.3rem .7rem; }
+[data-testid="stPlotlyChart"] {border:1px solid var(--line);border-radius:14px;background:white;}
