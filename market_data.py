@@ -179,7 +179,8 @@ def search_stocks(query: str, max_results: int = 8) -> list[dict]:
         normalized = normalize_symbol(q)
     except MarketDataError:
         normalized = None
-    if normalized:
+    ticker_like = bool(normalized and (len(q) <= 5 or '.' in q or '-' in q or q.startswith('^') or any(c.isdigit() for c in q)))
+    if ticker_like:
         add(_search_item(normalized, normalized, source='Ticker format; not yet verified'))
         return found
 
@@ -212,34 +213,46 @@ def resolve_symbol(query: str) -> str:
     alias = _NAME_ALIASES.get(query.strip().casefold())
     if alias:
         return alias[0]
+    q = query.strip()
     try:
-        return normalize_symbol(query)
+        code = normalize_symbol(q)
+        if len(q) <= 5 or '.' in q or '-' in q or q.startswith('^') or any(c.isdigit() for c in q):
+            return code
     except MarketDataError:
-        results = search_stocks(query)
-        if len(results) == 1:
-            return results[0]['symbol']
-        if not results:
-            raise MarketDataError('No matching stock found. Try a ticker or another company name.')
-        raise MarketDataError('Multiple listings found; select a stock from search results.')
+        pass
+    results = search_stocks(q)
+    if len(results) == 1:
+        return results[0]['symbol']
+    if not results:
+        raise MarketDataError('No matching company found. Try its exact ticker.')
+    raise MarketDataError('Multiple listings found; select a stock from search results.')
 
 
 def _validated_prices(prices: pd.DataFrame) -> pd.DataFrame:
+    """Discard invalid provider rows, not the entire stock history.
+
+    A missing Close in a past/curr. provisional bar is not evidence that the
+    company has no valid historical prices. Never synthesize/fill a close.
+    """
     if prices is None or not isinstance(prices, pd.DataFrame) or prices.empty:
-        raise MarketDataError('No data returned. Check the ticker or try again later.')
+        raise MarketDataError('No price history was returned. Try again or choose another ticker.')
     if 'Close' not in prices or not isinstance(prices.index, pd.DatetimeIndex):
-        raise MarketDataError('Unexpected price data format.')
-    if prices.index.has_duplicates or prices.index.isna().any():
-        raise MarketDataError('Duplicate or invalid trading dates received.')
+        raise MarketDataError('The provider returned an unsupported price format.')
     frame = prices.sort_index().copy()
+    frame = frame.loc[~frame.index.isna()]
+    frame = frame.loc[~frame.index.duplicated(keep='last')]
     frame['Close'] = pd.to_numeric(frame['Close'], errors='coerce')
-    close = frame['Close'].to_numpy(dtype=float)
-    if not np.isfinite(close).all() or (close <= 0).any():
-        raise MarketDataError('Missing or invalid prices received; analysis was stopped.')
+    good = np.isfinite(frame['Close'].to_numpy(dtype=float)) & (frame['Close'].to_numpy(dtype=float) > 0)
+    discarded = int((~good).sum())
+    frame = frame.iloc[np.flatnonzero(good)].copy()
     if len(frame) < 2:
-        raise MarketDataError('At least two daily records are required.')
+        raise MarketDataError('Not enough valid closing prices were returned. No analysis was generated.')
     for col in ('Open', 'High', 'Low', 'Volume'):
-        if col in frame.columns:
+        if col in frame:
             frame[col] = pd.to_numeric(frame[col], errors='coerce')
+            frame.loc[~np.isfinite(frame[col].to_numpy(dtype=float)), col] = np.nan
+    frame.attrs.update(prices.attrs)
+    frame.attrs['discarded_invalid_close_rows'] = discarded
     return frame
 
 

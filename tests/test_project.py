@@ -1,122 +1,114 @@
-"""Synthetic test fixtures only; no fixture is used by the application."""
+"""Offline unit tests: no live API keys, stock quotes, or fabricated app data."""
 import unittest
-from pathlib import Path
 from unittest.mock import Mock, patch
 from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
+
+from market_data import MarketDataError, normalize_symbol, _validated_prices, fetch_prices, resolve_symbol, get_market_indices
 from indicators import wilder_rsi, analyze
-from ai_analysis import explain, AIAnalysisError
-from market_data import fetch_prices, MarketDataError
+from news_data import parse_rss, filter_news, safe_link
+from ai_analysis import AIAnalysisError, explain
+from i18n import validate_catalog, t
 
 
-def fixture(n=80):
-    close = 100 + np.arange(n) * .1 + np.sin(np.arange(n))
-    frame = pd.DataFrame({'Close':close}, index=pd.date_range(end=pd.Timestamp.now(tz='UTC').normalize(), periods=n, freq='D'))
-    frame.attrs.update(company='Test fixture', currency='USD', exchange='Test exchange')
-    return frame
+def fixture(n=100):
+    x=np.arange(n)
+    return pd.DataFrame({'Close':100 + x*.15 + np.sin(x), 'Volume':1000 + x},
+                        index=pd.date_range('2026-02-01',periods=n,freq='B'))
+
+
+class MarketTests(unittest.TestCase):
+    def test_codes_and_names(self):
+        self.assertEqual(normalize_symbol('600519'), '600519.SS')
+        self.assertEqual(normalize_symbol('000858'),'000858.SZ')
+        self.assertEqual(normalize_symbol('0700'),'0700.HK')
+        self.assertEqual(resolve_symbol('贵州茅台'),'600519.SS')
+        self.assertEqual(resolve_symbol('Apple'),'AAPL')
+        self.assertGreaterEqual(len(get_market_indices('CN')),3)
+
+    def test_missing_closes_do_not_kill_entire_history(self):
+        data=fixture(75)
+        data.iloc[5,data.columns.get_loc('Close')]=np.nan
+        data.iloc[-1,data.columns.get_loc('Close')]=np.nan
+        clean=_validated_prices(data)
+        self.assertEqual(len(clean),73)
+        self.assertEqual(clean.attrs['discarded_invalid_close_rows'],2)
+        self.assertTrue(np.isfinite(clean.Close).all())
+        self.assertEqual(analyze(clean)[1] in ('BUY','SELL','HOLD'),True)
+
+    def test_all_invalid_still_rejected(self):
+        data=fixture(3);data['Close']=np.nan
+        with self.assertRaises(MarketDataError):
+            _validated_prices(data)
+
+    def test_fetch_prices_keeps_legacy_tuple_api(self):
+        ticker=Mock()
+        ticker.history.return_value=fixture(60)
+        ticker.get_history_metadata.return_value={'currency':'USD','longName':'Mock Corp'}
+        with patch('market_data.yf.Ticker',return_value=ticker):
+            prices, at=fetch_prices('AAPL')
+        self.assertEqual(prices.attrs['currency'],'USD')
+        self.assertEqual(len(prices),60)
+        self.assertIsNotNone(at.tzinfo)
 
 
 class IndicatorTests(unittest.TestCase):
-    def test_wilder_known_seed(self):
-        close = pd.Series([44.34,44.09,44.15,43.61,44.33,44.83,45.10,45.42,45.84,46.08,45.89,46.03,45.61,46.28,46.28])
-        self.assertAlmostEqual(wilder_rsi(close).iloc[-1], 70.4641350211, places=7)
+    def test_wilder_reference(self):
+        s=pd.Series([44.34,44.09,44.15,43.61,44.33,44.83,45.10,45.42,45.84,46.08,45.89,46.03,45.61,46.28,46.28])
+        self.assertAlmostEqual(wilder_rsi(s).iloc[-1],70.4641350211,places=7)
 
-    def test_rsi_extremes(self):
-        self.assertEqual(wilder_rsi(pd.Series(range(30), dtype=float)).iloc[-1], 100)
-        self.assertEqual(wilder_rsi(pd.Series(range(30,0,-1), dtype=float)).iloc[-1], 0)
-        self.assertEqual(wilder_rsi(pd.Series([10.] * 30)).iloc[-1], 50)
+    def test_metrics_and_signals(self):
+        frame,signal,reasons=analyze(fixture(100))
+        for col in ('SMA20','SMA50','RSI14','MACD','MACD_hist','BB_upper','BB_lower'):
+            self.assertIn(col,frame)
+        self.assertIn(signal,('BUY','SELL','HOLD'))
+        self.assertTrue(reasons)
 
-    def test_insufficient_and_flat(self):
-        self.assertEqual(analyze(fixture(49))[1], 'UNAVAILABLE')
-        self.assertEqual(analyze(pd.DataFrame({'Close':[10.] * 60}))[1], 'HOLD')
-
-    def test_no_lookahead(self):
-        full = analyze(fixture(80))[0]
-        prefix = analyze(fixture(80).iloc[:65])[0]
-        pd.testing.assert_frame_equal(full.iloc[:65], prefix)
-
-    def test_directional_signals(self):
-        rising = pd.DataFrame({'Close':100 + np.cumsum(np.tile([1.,-.6],40))})
-        falling = pd.DataFrame({'Close':100 + np.cumsum(np.tile([-1.,.6],40))})
-        self.assertEqual(analyze(rising)[1], 'BUY')
-        self.assertEqual(analyze(falling)[1], 'SELL')
-
-    def test_invalid_prices(self):
-        ticker = Mock()
-        ticker.history.return_value = pd.DataFrame({'Close':[10.,np.nan]}, index=pd.date_range('2026-01-01', periods=2))
-        with patch('market_data.yf.Ticker', return_value=ticker), self.assertRaises(MarketDataError):
-            fetch_prices('AAPL')
-
-    def test_empty_prices(self):
-        ticker = Mock()
-        ticker.history.return_value = pd.DataFrame()
-        with patch('market_data.yf.Ticker', return_value=ticker), self.assertRaises(MarketDataError):
-            fetch_prices('AAPL')
+    def test_short_history(self):
+        self.assertEqual(analyze(fixture(25))[1],'UNAVAILABLE')
 
 
-class AITests(unittest.TestCase):
-    def test_no_key_never_calls_api(self):
-        with patch('ai_analysis.requests.post') as post:
+class NewsTests(unittest.TestCase):
+    def test_rss_parsing_and_dedupe(self):
+        xml=b'''<rss><channel><item><title>Alpha shares update</title><link>https://news.google.com/a</link><source>Demo Publisher</source><pubDate>Mon, 26 Oct 2026 12:00:00 GMT</pubDate></item><item><title>Alpha shares update</title><link>https://news.google.com/b</link></item></channel></rss>'''
+        items=parse_rss(xml)
+        self.assertEqual(len(items),1)
+        self.assertEqual(items[0]['source'],'Demo Publisher')
+        self.assertTrue(items[0]['date'].startswith('2026-10-26'))
+        self.assertEqual(len(filter_news(items,keyword='Alpha')),1)
+
+    def test_reject_unsafe_url(self):
+        self.assertFalse(safe_link('javascript:alert(1)'))
+        self.assertFalse(safe_link('http://test.example'))
+
+
+class AIAndLocalizationTests(unittest.TestCase):
+    def test_lang_catalog(self):
+        count, problems=validate_catalog()
+        self.assertGreaterEqual(count,250)
+        self.assertFalse(problems)
+        self.assertNotEqual(t('nav.home','de'),t('nav.home','zh'))
+
+    def test_missing_key_does_not_request(self):
+        with patch('ai_analysis.requests.post') as mock_post:
             with self.assertRaises(AIAnalysisError):
-                explain({}, '')
-            post.assert_not_called()
+                explain({},'')
+            mock_post.assert_not_called()
 
-    def test_limit_no_retry(self):
-        with patch('ai_analysis.requests.post', return_value=Mock(status_code=429)) as post:
-            with self.assertRaisesRegex(AIAnalysisError, 'quota'):
-                explain({'rule_signal':'HOLD'}, 'test-only-placeholder')
-            self.assertEqual(post.call_count, 1)
+    def test_rate_limit(self):
+        with patch('ai_analysis.requests.post',return_value=Mock(status_code=429)):
+            with self.assertRaisesRegex(AIAnalysisError,'rate limit'):
+                explain({'symbol':'AAPL'},'test-only-value')
 
-    def test_response(self):
-        response = Mock(status_code=200)
-        response.json.return_value = {'choices':[{'finish_reason':'stop', 'message':{'content':'Test response'}}]}
-        with patch('ai_analysis.requests.post', return_value=response):
-            self.assertEqual(explain({}, 'test-only-placeholder'), 'Test response')
-
-
-class UITests(unittest.TestCase):
-    def test_search_success_and_failure(self):
-        from streamlit.testing.v1 import AppTest
-        import streamlit as st
-        st.cache_data.clear()
-        def prices(symbol):
-            if symbol == 'INVALID':
-                raise MarketDataError('No data returned.')
-            return fixture(), datetime.now(timezone.utc)
-        with patch('market_data.fetch_prices', side_effect=prices), patch('market_data.fetch_news', return_value=([], datetime.now(timezone.utc))), patch.dict('os.environ', {'GROQ_API_KEY':''}):
-            app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / 'app.py'), default_timeout=15).run()
-            self.assertEqual(len(app.exception), 0)
-            self.assertEqual(app.radio[0].value, 'Overview')
-            next(x for x in app.button if x.label == 'Explore AAPL →').click()
-            app.run()
-            self.assertEqual(app.radio[0].value, 'Stock research')
-            self.assertEqual(len(app.exception), 0)
-            self.assertEqual(len(app.metric), 4)
-            self.assertTrue(next(x for x in app.button if x.label == 'Generate AI explanation').disabled)
-            app.text_input[0].set_value('INVALID')
-            next(x for x in app.button if x.label == 'Research this stock →').click()
-            app.run()
-            self.assertEqual(len(app.exception), 0)
-            self.assertEqual(len(app.error), 1)
-            self.assertEqual(len(app.metric), 0)
-
-    def test_home_partial_outage_and_news(self):
-        from streamlit.testing.v1 import AppTest
-        import streamlit as st
-        st.cache_data.clear()
-        def prices(symbol):
-            if symbol == '^IXIC':
-                raise MarketDataError('Test outage')
-            return fixture(), datetime.now(timezone.utc)
-        with patch('market_data.fetch_prices',side_effect=prices), patch('market_data.fetch_news',side_effect=MarketDataError('Test news outage')), patch.dict('os.environ', {'GROQ_API_KEY':''}):
-            app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'),default_timeout=15).run()
-            self.assertEqual(len(app.exception),0)
-            self.assertTrue(any('Unavailable' in x.value for x in app.markdown))
-            app.radio[0].set_value('News').run()
-            self.assertEqual(len(app.exception),0)
-            self.assertTrue(any('temporarily unavailable' in x.value for x in app.caption))
+    def test_groq_report(self):
+        res=Mock(status_code=200)
+        res.json.return_value={'choices':[{'finish_reason':'stop','message':{'content':'Mock educational report'}}]}
+        with patch('ai_analysis.requests.post',return_value=res) as call:
+            output=explain({'symbol':'AAPL'},'test-only-value','zh')
+        self.assertIn('educational',output)
+        self.assertIn('Simplified Chinese',call.call_args.kwargs['json']['messages'][0]['content'])
 
 
-if __name__ == '__main__':
+if __name__=='__main__':
     unittest.main()

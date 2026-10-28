@@ -11,9 +11,7 @@ Public interface (stable for the V2 modules):
 
 No import of Streamlit: UI code owns the language selection/session state.
 The English, Chinese and German copy has exactly the same set of keys.
-Run `python i18n.py --check` to verify completeness and format placeholders.x
-git branch --show-current
-
+Run `python i18n.py --check` to verify completeness and format placeholders.
 """
 
 from __future__ import annotations
@@ -32,6 +30,30 @@ LANGUAGE_LABELS = {'en': 'English', 'zh': '简体中文', 'de': 'Deutsch'}
 # Catalog design: UI language is independent from market price-direction colors.
 # Dynamic arguments use Python named placeholders, e.g. {symbol}, {count}.
 _COPY: dict[str, tuple[str, str, str]] = {
+    # Taurus V2 integrated UI copy
+    'v2.market_examples': ('Selected research ideas, not a live popularity ranking.', '精选研究标的，并非实时热门排名。', 'Ausgewählte Rechercheideen, kein Live-Beliebtheitsranking.'),
+    'v2.curated': ('Selected research universe — not a market-wide ranking', '精选研究股票池（并非全市场排名）', 'Ausgewählte Aktien – kein marktweites Ranking'),
+    'v2.daily_observation': ('Daily observation', '日线数据', 'Tagesdaten'),
+    'v2.previous_close': ('vs previous daily close', '较上一交易日收盘', 'ggü. letztem Tagesschluss'),
+    'v2.data_unavailable': ('Price data unavailable', '行情暂时不可用', 'Kursdaten nicht verfügbar'),
+    'v2.open_stock': ('Open stock', '查看股票', 'Aktie öffnen'),
+    'v2.load_fund': ('Load financial metrics', '加载财务指标', 'Finanzkennzahlen laden'),
+    'v2.mixed_periods': ('Fundamentals can combine different reporting periods. Verify filings.', '财务指标可能来自不同报告期间，请核实原始财报。', 'Finanzdaten können verschiedene Berichtszeiträume abdecken. Abschlüsse prüfen.'),
+    'v2.chart_type': ('Chart type', '图表类型', 'Diagrammtyp'),
+    'v2.updated_quote': ('Data may be delayed or provisional.', '行情可能延迟或尚未最终确认。', 'Kurse können verzögert oder vorläufig sein.'),
+    'v2.invalid_rows': ('{count} incomplete history row(s) excluded; no prices were synthesized.', '已排除 {count} 条不完整历史行情，未补造价格。', '{count} unvollständige Kurszeilen ausgeschlossen; keine Kurse erfunden.'),
+    'v2.rule_method': ('BUY and SELL are fixed technical classifications, not trading advice or a validated strategy.', 'BUY 和 SELL 只是固定规则的技术分类，不是交易建议或经过验证的策略。', 'BUY und SELL sind technische Klassifikationen, keine Anlageberatung oder validierte Strategie.'),
+    'v2.rsi_chart': ('Momentum: RSI(14)', '动量指标：RSI(14)', 'Momentum: RSI(14)'),
+    'v2.rsi_note': ('MACD and remaining indicators are available in the price table.', 'MACD 等指标可在行情数据表中查看。', 'MACD und weitere Indikatoren stehen in der Kurstabelle.'),
+    'v2.research_sections': ('Research sections', '研究内容', 'Analysebereiche'),
+    'v2.all_time': ('Any time', '不限时间', 'Alle Zeiten'),
+    'v2.one_day': ('24 hours', '24 小时', '24 Stunden'),
+    'v2.seven_days': ('7 days', '7 天', '7 Tage'),
+    'v2.thirty_days': ('30 days', '30 天', '30 Tage'),
+    'v2.news_sources_note': ('News sources may be temporarily unavailable. Follow original publisher links.', '新闻来源可能暂时不可用，请通过原文链接核实。', 'Nachrichtenquellen können vorübergehend ausfallen. Originalquellen prüfen.'),
+    'v2.stale': ('Last observation is over 14 days old; technical signal withheld.', '最新行情超过 14 天，暂停技术信号。', 'Letzter Kurs älter als 14 Tage: technisches Signal ausgesetzt.'),
+    'v2.method': ('Rule methodology', '信号计算方法', 'Signalmethodik'),
+    'v2.backup_note': ('Research prototype · No order execution · Not investment advice', '研究演示 · 不执行交易 · 不构成投资建议', 'Recherche-Prototyp · Keine Orderausführung · Keine Anlageberatung'),
     # Application + navigation
     'app.name': ('Taurus AI', 'Taurus AI', 'Taurus AI'),
     'app.tagline': ('Smarter research. Clearer decisions.', '更聪明地研究，更清晰地判断。', 'Besser recherchieren. Klarer entscheiden.'),
